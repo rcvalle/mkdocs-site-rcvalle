@@ -1,0 +1,41 @@
+copyright: Copyright 2022 Ramon de C Valle
+extra:
+  analytics:
+    property: G-63YYV7T3EM
+    provider: google
+  generator: false
+  homepage: https://rcvalle.com
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rcvalle
+      name: rcvalle on GitHub
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/rcvalle
+      name: rcvalle on LinkedIn
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/rcvalle
+      name: rcvalle on Twitter
+plugins:
+  - search
+site_name: rcvalle's Notes
+site_url: https://rcvalle.com
+theme:
+  custom_dir: overrides
+  # favicon: images/favicon.png
+  features:
+    - navigation.indexes
+  # logo: assets/logo.png
+  name: material
+  palette:
+    # Palette toggle for light mode
+    - primary: white
+      scheme: default
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - primary: black
+      scheme: slate
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to light mode
