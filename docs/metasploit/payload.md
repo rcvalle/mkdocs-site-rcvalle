@@ -1,0 +1,33 @@
+---
+hide:
+  - footer
+title: Payload modules
+---
+
+Metasploit
+==========
+
+These are the payload modules I developed that are part of Metasploit:
+
+## Payload modules
+
+{%- for module in modules %}
+{%- if module.name.startswith("payload/") %}
+### {{ module.name }}
+
+<aside class="mdx-font-size-small" markdown>
+:material-calendar:{ title="Published" } {{ module.published.strftime("%b %-d, %Y") }}
+{%- if module.updated %}
+· :material-calendar-check:{ title="Updated" } {{ module.updated.strftime("%b %-d, %Y") }}
+{%- endif %}
+{%- if module.vulnerabilities %}
+· :material-bug:{ title="Vulnerabilities" } {{ ", ".join(module.vulnerabilities) }}
+{%- endif -%}
+</aside>
+
+{{ module.description }}
+
+:material-download:{ title="Download" } [{{ module.name.split("/")[-1] }}.rb](https://github.com/rcvalle/metasploit/raw/HEAD/modules/{{ module.name.replace("payload/", "payloads/singles/") }}.rb)
+· :material-link:{ title="Link" } [View on Rapid7 Database](https://www.rapid7.com/db/modules/{{ module.name }})
+{%- endif %}
+{%- endfor %}

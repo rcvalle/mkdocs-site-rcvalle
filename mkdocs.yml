@@ -1,0 +1,83 @@
+copyright: Copyright 2023 Ramon de C Valle
+extra:
+  analytics:
+    property: G-63YYV7T3EM
+    provider: google
+  generator: false
+  homepage: https://rcvalle.com
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rcvalle
+      name: rcvalle on GitHub
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/rcvalle
+      name: rcvalle on LinkedIn
+    - icon: fontawesome/brands/mastodon
+      link: https://mastodon.social/@rcvalle
+      name: rcvalle on Mastodon
+    - icon: fontawesome/brands/x-twitter
+      link: https://twitter.com/rcvalle
+      name: rcvalle on X
+extra_css:
+  - stylesheets/extra.css
+markdown_extensions:
+  # Python Markdown
+  - admonition
+  - attr_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  # Python Markdown Extensions
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight
+  - pymdownx.superfences
+nav:
+  - Blog:
+    - blog/index.md
+  - About: about.md
+  - Articles: articles.md
+  - Exploits: exploits.md
+  - Metasploit:
+    - metasploit/index.md
+    - metasploit/auxiliary.md
+    - metasploit/exploit.md
+    - metasploit/payload.md
+  - Projects: projects.md
+  - Vulnerabilities: vulnerabilities.md
+plugins:
+  - blog
+  - callouts
+  - ezlinks
+  - glightbox
+  - macros:
+      include_yaml:
+        - articles: data/articles.yml
+        - exploits: data/exploits.yml
+        - modules: data/modules.yml
+        - projects: data/projects.yml
+        - vulnerabilities: data/vulnerabilities.yml
+  - redirects:
+      redirect_maps:
+        'index.md': 'blog/index.md'
+        '2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
+        '2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
+        # 'blog/2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
+        'blog/2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
+  # - search
+site_name: rcvalle
+site_url: https://rcvalle.com
+theme:
+  custom_dir: overrides
+  # favicon: images/favicon.png
+  features:
+    - navigation.indexes
+    - navigation.tabs
+  logo: assets/images/logo.png
+  name: material
+  palette:
+    accent: cyan
+    primary: cyan
+    scheme: slate

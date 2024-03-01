@@ -1,0 +1,709 @@
+\documentclass{article}
+\usepackage[brazilian]{babel}
+\usepackage{caption}
+\usepackage{float}
+\usepackage[T1]{fontenc}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage{hyphenat}
+\usepackage{listingsutf8}
+\usepackage{mathabx}
+\usepackage{tablefootnote}
+
+\lstset{
+    basicstyle=\fontsize{6}{8}\ttfamily,
+    breaklines=true,
+    captionpos=b,
+    extendedchars=true
+}
+\lstset{
+literate=
+{á}{{\'a}}1
+{à}{{\`a}}1
+{ã}{{\~a}}1
+{é}{{\'e}}1
+{ê}{{\^e}}1
+{í}{{\'i}}1
+{ó}{{\'o}}1
+{õ}{{\~o}}1
+{ú}{{\'u}}1
+{ü}{{\"u}}1
+{ç}{{\c{c}}}1
+}
+\title{Suporte a LLVM CFI e LLVM CFI Entre Linguagens para Rust}
+\author{Ramon de C Valle}
+\date{Dezembro de 2023}
+\begin{document}
+   \maketitle
+
+Temos o prazer de compartilhar que trabalhamos com a comunidade Rust para adicionar suporte a LLVM CFI e LLVM CFI entre linguagens (e LLVM KCFI e LLVM KCFI entre linguagens) ao compilador Rust como parte do nosso trabalho no \href{https://www.rust-lang.org/governance/teams/compiler#Exploit%20Mitigations%20Project%20Group}{\textit{Rust Exploit Mitigations Project Group}}. Esta é a primeira implementação de \textit{forward-edge control flow protection}, de fina granularidade, entre linguagens, para binários de linguagem mista que conhecemos.
+
+À medida que a indústria continua a explorar a adoção de Rust, \href{https://www.ndss-symposium.org/wp-content/uploads/2022-78-paper.pdf}{ataques entre linguagens} em \href{https://dl.acm.org/doi/pdf/10.1145/3418898}{binários de linguagem mista} (também conhecidos como “binários mistos”), e criticamente \href{https://rcvalle.com/docs/rust-cfi-design-doc.pdf}{a ausência de suporte a \textit{forward-edge control flow protection} no compilador Rust}, são uma grande preocupação de segurança ao migrar gradualmente de C e C++ para Rust, e quando código compilado em C ou C++ e Rust compartilham o mesmo espaço de endereço virtual.
+
+
+\section{Introdução}
+
+Com a crescente popularidade de Rust como linguagem de programação de uso geral e como substituto de C e C++ devido às suas garantias de segurança de memória e de \textit{thread}, muitas empresas e projetos estão adotando ou migrando para Rust. Um dos caminhos mais comuns para migrar para Rust é substituir gradualmente C ou C++ por Rust em um programa escrito em C ou C++.
+
+Rust fornece interoperabilidade com código estrangeiro escrito em C via \textit{Foreign Function Interface (FFI)}. No entanto, código estrangeiro não fornece as mesmas garantias de segurança de memória e de \textit{thread} que Rust fornece, e é suscetível a corrupção de memória e problemas de simultaneidade.\footnotemark[1] Portanto, é geralmente aceito que introduzir código estrangeiro compilado em C ou C++ a um programa escrito em Rust pode degradar a segurança do programa.
+
+\footnotetext[1]{Compiladores C e C++ modernos fornecem mitigações de \textit{exploit} para aumentar a dificuldade de explorar vulnerabilidades resultantes desses problemas. No entanto, algumas dessas mitigações de \textit{exploit} não são aplicadas ao introduzir código estrangeiro compilado em C ou C++ a um programa escrito em Rust, principalmente devido à ausência de suporte a essas mitigações de \textit{exploit} no compilador Rust (veja \hyperref[table1]{Tabela 1}).}
+
+Embora também se acredite geralmente que substituir C ou C++ sensível por Rust em um programa escrito em C ou C++ melhora a segurança do programa, \href{https://dl.acm.org/doi/pdf/10.1145/3418898}{Papaevripides e Athanasopoulos demonstraram que nem sempre é esse o caso}, e que introduzir código estrangeiro compilado em Rust a um programa escrito em C ou C++ com mitigações de \textit{exploit} modernas, como \textit{control flow protection}, pode na verdade degradar a segurança do programa, principalmente devido à ausência de suporte a essas mitigações de \textit{exploit} no compilador Rust, principalmente \textit{forward-edge control flow protection}. (Veja \hyperref[control-flow-protection]{\textit{Control flow protection}}.) Isso foi posteriormente formalizado como uma nova classe de ataques (i.e., \href{https://www.ndss-symposium.org/wp-content/uploads/2022-78-paper.pdf}{ataques entre linguagens}).
+
+O compilador Rust não suportava \textit{forward-edge control flow protection} ao
+
+\begin{itemize}
+\item usar Unsafe Rust.
+\item introduzir código estrangeiro compilado em C ou C++ a um programa escrito em Rust.
+\item introduzir código estrangeiro compilado em Rust a um programa escrito em C ou C++.
+\end{itemize}
+
+A \hyperref[table1]{Tabela 1} resume os riscos relacionados à interoperabilidade ao compilar programas para o sistema operacional Linux na arquitetura AMD64 ou equivalente sem suporte a \textit{forward-edge control flow protection} no compilador Rust.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.3\linewidth} | p{0.3\linewidth} | p{0.3\linewidth}}
+\hline
+\textbf{} & \textbf{Sem usar Unsafe Rust} & \textbf{Usando Unsafe Rust} \\ \hline
+Código compilado somente em Rust & $\blacktriangledown$ \textsuperscript{I} Chamadas indiretas em código compilado em Rust não são validadas.\tablefootnote[2]{Um ataque que permite com sucesso um programa de código compilado somente em Rust, sem usar Unsafe Rust, ter seu fluxo de controle redirecionado como resultado de uma corrupção de memória ou problema de simultaneidade ainda não foi demonstrado.} & $\blacktriangledown$ Unsafe Rust é suscetível a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Chamadas indiretas em código compilado em Rust não são validadas. \\ \hline
+Introduzindo código estrangeiro compilado em C ou C++ a um programa escrito em Rust & $\blacktriangledown$ Código estrangeiro é suscetível a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Chamadas indiretas em código compilado em Rust não são validadas. & $\blacktriangledown$ Código estrangeiro é suscetível a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Unsafe Rust é suscetível a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Chamadas indiretas em código compilado em Rust não são validadas. \\ \hline
+Introduzindo código estrangeiro compilado em Rust a um programa escrito em C ou C++\tablefootnote[3]{Assumindo que \textit{forward-edge control flow protection} está habilitada.} & $\blacktriangleup$ \textsuperscript{II} Chamadas indiretas em código compilado em C e C++ são validadas. \newline $\blacktriangledown$ C e C++ são suscetíveis a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Chamadas indiretas em código compilado em Rust não são validadas. & $\blacktriangleup$ Chamadas indiretas em código compilado em C e C++ são validadas. \newline $\blacktriangledown$ C e C++ são suscetíveis a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Unsafe Rust é suscetível a corrupção de memória e problemas de simultaneidade. \newline $\blacktriangledown$ Chamadas indiretas em código compilado em Rust não são validadas. \\ \hline
+\end{tabular}
+\begin{tablenotes}
+\item[1] \textsuperscript{I} Triângulo apontando para baixo ($\blacktriangledown$) precede um indicador de risco negativo.
+\item[2] \textsuperscript{II} Triângulo apontando para cima ($\blacktriangleup$) precede um indicador de risco positivo.
+\end{tablenotes}
+\caption{\label{table1}Resumo dos riscos relacionados à interoperabilidade ao compilar programas para o sistema operacional Linux na arquitetura AMD64 ou equivalente sem suporte a \textit{forward-edge control flow protection} no compilador Rust.}
+\end{table}
+
+Sem suporte a \textit{forward-edge control flow protection} no compilador Rust, chamadas indiretas em código compilado em Rust não eram validadas, permitindo que a \textit{forward-edge control flow protection} fosse contornada trivialmente \href{https://dl.acm.org/doi/ pdf/10.1145/3418898}{conforme demonstrado por Papaevripides e Athanasopoulos}. Portanto, a ausência de suporte a \textit{forward-edge control flow protection} no compilador Rust \href{https://opensrcsec.com/open_source_security_announces_rust_gcc_funding}{foi uma grande preocupação de segurança} ao migrar gradualmente de C e C++ para Rust, e quando código compilado em C ou C++ e Rust compartilham o mesmo espaço de endereço virtual.
+
+
+\subsection{Control flow protection}
+\label{control-flow-protection}
+
+\href{https://en.wikipedia.org/wiki/Control-flow_integrity}{\textit{Control flow protection}} é uma mitigação de \textit{exploit} que protege programas contra o redirecionamento de seu fluxo de controle. É classificado em duas categorias:
+
+\begin{itemize}
+\item \textit{Forward-edge control flow protection}
+\item \textit{Backward-edge control flow protection}
+\end{itemize}
+
+
+\subsubsection{Forward-edge control flow protection}
+
+\textit{Forward-edge control flow protection} protege programas contra o redirecionamento de seu fluxo de controle, realizando verificações para garantir que os destinos de chamadas indiretas sejam um de seus destinos válidos no gráfo de fluxo de controle. A abrangência dessas verificações varia de acordo com a implementação. Isso também é conhecido como \textit{forward-edge control flow integrity (CFI)}.
+
+Processadores mais novos fornecem assistência de hardware para \textit{forward-edge control flow protection}, como \href{https://community.arm.com/arm-community-blogs/b/tools-software-ides-blog/posts/code-reuse-attacks-the-compiler-story}{ARM Branch Target Identification (BTI)}, \href{https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/armv8-1-m-pointer-authentication-and-branch-target-identification-extension}{ARM Pointer Authentication}, e Intel Indirect Branch Tracking (IBT) como parte da \href{https://www.intel.com/content/www/us/en/developer/articles/technical/technical-look-control-flow-enforcement-technology.html}{Intel Control-flow Enforcement Technology (CET)}. No entanto, as implementações baseadas em ARM BTI e Intel IBT são menos abrangentes do que as implementações baseadas em software, como \href{https://clang.llvm.org/docs/ControlFlowIntegrity.html}{LLVM ControlFlowIntegrity (CFI)}, e o disponível comercialmente \href{https://grsecurity.net/rap_faq}{grsecurity/PaX Reuse Attack Protector (RAP)}.
+
+Quanto menos abrangente for a proteção, maior é a probabilidade de ela ser contornada. Por exemplo, \href{https://learn.microsoft.com/en-us/windows/win32/secbp/control-flow-guard}{Microsoft Windows Control Flow Guard (CFG)} testa apenas se o destino de uma chamada indireta é um ponto de entrada de função válido, o que equivale a agrupar todos os ponteiros de função em um único grupo, e testar se todos os destinos de chamadas indiretas estão neste grupo. Isso também é conhecido como \textit{coarse-grained CFI}.
+
+Isso significa que em uma tentativa de exploração, um atacante pode redirecionar o fluxo de controle para qualquer função e, quanto maior for o programa, maior será a probabilidade de um atacante encontrar uma função da qual possa se beneficiar (e.g., um pequeno programa de linha de comando versus um navegador).
+
+Semelhante à implementação do Microsoft Windows CFG, esta é infelizmente a implementação que assistência de hardware para \textit{forward-edge control flow protection} (e.g., ARM BTI e Intel IBT) foi inicialmente projetada com base e, como tal, fornece proteção equivalente com a adição de instruções especializadas. \href{https://query.prod.cms.rt.microsoft.com/cms/api/am/binary/RE37dMC}{Microsoft Windows eXtended Flow Guard (XFG)}, ARM Pointer Authentication-based \textit{forward-edge control flow protection} e \href{https://arxiv.org/abs/2303.16353}{Intel Fine Indirect Branch Tracking (FineIBT)} visam resolver isso combinando assistência de hardware com testes de tipo de ponteiro de função baseados em software semelhantes ao LLVM CFI. Isso também é conhecido como \textit{fine-grained CFI}.
+
+
+\subsubsection{Backward-edge control flow protection}
+
+\textit{Backward-edge control flow protection} protege programas contra o redirecionamento de seu fluxo de controle, realizando verificações para garantir que os destinos de retornos de chamada sejam uma de suas origens válidas (i.e., locais de chamada) no gráfo de fluxo de controle. \textit{Backward-edge control flow protection} está fora do escopo deste artigo.
+
+
+\section{Detalhes}
+
+Há vários detalhes no \textit{design} e implementação de \textit{forward-edge control flow protection}, de fina granularidade, entre linguagens usando testes de tipo de ponteiro de função entre diferentes linguagens. Esta seção documenta os principais desafios na implementação entre Rust e C ou C++, mais especificamente o compilador Rust e Clang.
+
+
+\subsection{Metadados de tipo}
+
+O LLVM usa \href{https://llvm.org/docs/TypeMetadata.html}{metadados de tipo} para permitir que os módulos IR agreguem ponteiros por seus tipos. Esses metadados de tipo são usados pelo LLVM CFI para testar se um determinado ponteiro está associado a um identificador de tipo (i.e., testar associação de tipo).
+
+O Clang usa o nome da estrutura \texttt{typeinfo} da \href{https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-special-vtables}{\textit{virtual tables and RTTI}} do \href{https://itanium-cxx-abi.github.io/cxx-abi/abi.html}{Itanium C++ ABI} como identificadores de metadados de tipo para ponteiros de função.
+
+Para suporte a LLVM CFI entre linguagens, uma codificação compatível deve ser usada. A codificação compatível escolhida para suporte LLVM CFI entre linguagens é o \textit{Itanium C++ ABI mangling} com \textit{vendor extended type qualifiers and types} para tipos Rust que não são usados através da borda FFI (veja \textit{Type metadata} no \href{https://rcvalle.com/docs/rust-cfi-design-doc.pdf}{documento de \textit{design}}).
+
+
+\subsection{Codificando tipos inteiros C}
+
+Rust define \texttt{char} como um valor escalar Unicode, enquanto C define \texttt{char} como um tipo inteiro. Rust também define tipos inteiros de tamanho explícito (i.e., \texttt{i8}, \texttt{i16}, \texttt{i32}, …), enquanto C define tipos inteiros abstratos (i.e., \texttt{char}, \texttt{short}, \texttt{long}, …), cujos tamanhos reais são definidos pela implementação e podem variar entre diferentes modelos de dados. Isso causa ambiguidade se tipos inteiros Rust forem usados em tipos de função \texttt{extern "C"} que representam funções C porque o \textit{Itanium C++ ABI} especifica codificações para tipos inteiros C (e.g., \texttt{char}, \texttt{short}, \texttt{long}, …), e não suas representações definidas (e.g., inteiro com sinal de 8 bits, inteiro com sinal de 16 bits, inteiro com sinal de 32 bits, …).
+
+Por exemplo, o compilador Rust atualmente não consegue identificar se uma
+
+\begin{lstlisting}[language=Rust, caption={Exemplo de função extern "C"\ usando um tipo inteiro Rust.}]
+extern "C" {
+    fn func(arg: i64);
+}
+\end{lstlisting}
+
+representa uma \texttt{void func(long arg)} ou \texttt{void func(long long arg)} em um modelo de dados LP64 ou equivalente.
+
+Para suporte a LLVM CFI entre linguagens, o compilador Rust deve ser capaz de identificar e codificar corretamente tipos C em tipos de função \texttt{extern "C"} chamadas indiretamente através da borda FFI quando CFI está habilitado.
+
+Por conveniência, Rust fornece alguns \textit{aliases} de tipos C para uso ao interoperar com código estrangeiro escrito em C, e esses \textit{aliases} de tipos C podem ser usados para desambiguação. No entanto, no momento em que os tipos são codificados, todos os \textit{aliases} de tipo já estão resolvidos para suas respectivas representações de tipo \texttt{ty::Ty} (i.e., seus respectivos tipos Rust), tornando atualmente impossível identificar o uso de \textit{aliases} de tipos C a partir de seus tipos resolvidos.
+
+Por exemplo, o compilador Rust atualmente também não consegue identificar que uma
+
+\begin{lstlisting}[language=Rust, caption={Exemplo de função extern "C"\ usando um alias de tipo C.}]
+extern "C" {
+    fn func(arg: c_long);
+}
+\end{lstlisting}
+
+usou o \textit{alias} de tipo \texttt{c\_long} e não é capaz de desambiguar entre ela e uma \texttt{extern "C"\ fn func(arg: c\_longlong)} em um modelo de dados LP64 ou equivalente.
+
+Consequentemente, o compilador Rust é incapaz de identificar e codificar corretamente tipos C em tipos de função \texttt{extern "C"} chamadas indiretamente através da borda FFI quando CFI está habilitado:
+
+\begin{lstlisting}[language=C, caption={Exemplo de biblioteca C usando tipos inteiros C e codificação do Clang.}]
+#include <stdio.h>
+#include <stdlib.h>
+
+// Esta definição tem o id de tipo "_ZTSFvlE".
+void
+hello_from_c(long arg)
+{
+    printf("Hello from C!\n");
+}
+
+// Esta definição tem o id de tipo "_ZTSFvPFvlElE"--isso pode ser ignorado para
+// os propósitos deste exemplo.
+void
+indirect_call_from_c(void (*fn)(long), long arg)
+{
+    // Este local de chamada testa se o ponteiro de destino é um membro do grupo
+    // derivado do mesmo id de tipo da declaração de fn, que tem o id de tipo
+    // "_ZTSFvlE".
+    //
+    // Observe que como o teste está no local da chamada e é gerado pelo Clang,
+    // o id de tipo usado no teste é codificado pelo Clang.
+    fn(arg);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Exemplo de programa Rust usando tipos inteiros Rust e a codificação do compilador Rust.}]
+use std::ffi::c_long;
+
+#[link(name = "foo")]
+extern "C" {
+    // Esta declaração teria o id de tipo "_ZTSFvlE", mas no momento em que os
+    // tipos são codificados, todos os aliases de tipo já estão resolvidos para
+    // seus respectivos tipos Rust, então isso é codificado como "_ZTSFvu3i32E"
+    // ou "_ZTSFvu3i64E", dependendo para qual tipo o alias de tipo c_long é
+    // resolvido, que atualmente usa a codificação vendor extended type
+    // u<length><type-name> para os tipos inteiros Rust-esse é o problema
+    // demonstrado neste exemplo.
+    fn hello_from_c(_: c_long);
+
+    // Esta declaração teria o id de tipo "_ZTSFvPFvlElE", mas é codificado como
+    // "_ZTSFvPFvu3i32ES_E" (comprimido) ou "_ZTSFvPFvu3i64ES_E" (comprimido),
+    // da mesma forma que a declaração hello_from_c acima--isso pode pode ser
+    // ignorado para os propósitos deste exemplo.
+    fn indirect_call_from_c(f: unsafe extern "C" fn(c_long), arg: c_long);
+}
+
+// Esta definição teria o id de tipo "_ZTSFvlE", mas é codificado como
+// "_ZTSFvu3i32E" ou "_ZTSFvu3i64E", da mesma forma que a declaração
+// hello_from_c acima.
+unsafe extern "C" fn hello_from_rust(_: c_long) {
+    println!("Hello, world!");
+}
+
+// Esta definição teria o id de tipo "_ZTSFvlE", mas é codificado como
+// "_ZTSFvu3i32E" ou "_ZTSFvu3i64E", da mesma forma que a declaração
+// hello_from_c acima.
+unsafe extern "C" fn hello_from_rust_again(_: c_long) {
+    println!("Hello from Rust again!");
+}
+
+// Esta definição também teria o id de tipo "_ZTSFvPFvlElE", mas é codificado
+// como "_ZTSFvPFvu3i32ES_E" (comprimido) ou "_ZTSFvPFvu3i64ES_E" (comprimido),
+// da mesma forma que a declaração hello_from_c acima--isso pode ser ignorado
+// para os propósitos deste exemplo.
+fn indirect_call(f: unsafe extern "C" fn(c_long), arg: c_long) {
+    // Este local de chamada indireta testa se o ponteiro de destino é um membro
+    // do grupo derivado do mesmo id de tipo da declaração de f, que teria o id
+    // de tipo "_ZTSFvlE", mas é codificado como como "_ZTSFvu3i32E" ou
+    // "_ZTSFvu3i64E", da mesma forma que a declaração hello_from_c acima.
+    //
+    // Observe que como o teste está no local da chamada e é gerado pelo
+    // compilador Rust, o id de tipo usado no teste é codificado pelo compilador
+    // Rust.
+    unsafe { f(arg) }
+}
+
+// Esta definição tem o id de tipo "_ZTSFvvE"--isso pode ser ignorado para os
+// propósitos deste exemplo.
+fn main() {
+    // Isto demonstra uma chamada indireta dentro do código somente em Rust
+    // usando a mesma codificação para hello_from_rust e o teste no local de
+    // chamada indireta em indirect_call (i.e., "_ZTSFvu3i32E" ou
+    // "_ZTSFvu3i64E").
+    indirect_call(hello_from_rust, 5);
+
+    // Isto demonstra uma chamada indireta através da borda FFI com o compilador
+    // Rust e Clang usando codificações diferentes para hello_from_c e o teste
+    // no local de chamada indireta em indirect_call (i.e., "_ZTSFvu3i32E" ou
+    // "_ZTSFvu3i64E" vs "_ZTSFvlE").
+    //
+    // Ao usar o LTO do rustc (i.e., -Clto), isto funciona porque o id de tipo
+    // usado é da hello_from_c declarada em Rust, que é codificado pelo
+    // compilador Rust (i.e., "_ZTSFvu3i32E" ou "_ZTSFvu3i64E").
+    //
+    // Ao usar LTO (adequado) (i.e., -clinker-plugin-lto), isto não funciona
+    // porque o id de tipo usado é da hello_from_c definida em C, que é
+    // codificado pelo Clang (i.e., "_ZTSFvlE").
+    indirect_call(hello_from_c, 5);
+
+    // Isto demonstra uma chamada indireta para uma função passada como uma
+    // callback através da borda FFI com o compilador Rust e Clang usando
+    // codificações diferentes para hello_from_rust_again e o teste no local de
+    // chamada indireta em indirect_call_from_c (i.e., "_ZTSFvu3i32E" ou
+    // "_ZTSFvu3i64E" vs "_ZTSFvlE").
+    //
+    // Quando funções Rust são passadas como callbacks através da borda FFI para
+    // serem chamadas de volta do código C, os testes também estão nos locais de
+    // chamadas, mas ao invés gerados por Clang, então os ids de tipo usados nos
+    // testes são codificados pelo Clang, que não correspondem aos ids de tipo
+    // de declarações codificados pelo compilador Rust (e.g.,
+    // hello_from_rust_again). (O mesmo acontece ao contrário para as funções C
+    // passadas como como callbacks através da borda FFI para serem chamadas de
+    // volta do código Rust.)
+    unsafe {
+        indirect_call_from_c(hello_from_rust_again, 5);
+    }
+}
+\end{lstlisting}
+
+Sempre que há uma chamada indireta através da borda FFI ou uma chamada indireta para uma função passada como uma \textit{callback} através da borda FFI, o compilador Rust e Clang usam codificações diferentes para tipos inteiros C para definições e declarações de função, e em locais de chamada indireta quando CFI está habilitado (veja Figs. 3–4).
+
+
+\subsection{A opção de normalização de inteiros}
+
+Para resolver o problema de codificação de tipos inteiros C, \href{https://reviews.llvm.org/D139395}{adicionamos uma opção de normalização de inteiros ao Clang} (i.e., \href{https://clang.llvm .org/docs/ControlFlowIntegrity.html#fsanitize-cfi-icall-experimental-normalize-integers}{\texttt{-fsanitize-cfi-icall-experimental-normalize-integers}}). Esta opção habilita a normalização de tipos inteiros como \textit{vendor extended types} para suporte a LLVM CFI (e LLVM KCFI) entre linguagens com outras linguagens que não podem representar e codificar tipos inteiros C.
+
+\begin{lstlisting}[language=C, caption={Exemplo de biblioteca C usando tipos inteiros C e codificação Clang com a opção de normalização de inteiros habilitada.}]
+#include <stdio.h>
+#include <stdlib.h>
+
+// Esta definição tem o id de tipo "_ZTSFvlE", mas será codificado como
+// "_ZTSFvu3i32E" ou "_ZTSFvu3i64E", dependendo do modelo de dados, se a opção
+// de normalização de inteiros está habilitada, que usa a codificação vendor
+// extended type u<length><type-name> para os tipos inteiros C.
+void
+hello_from_c(long arg)
+{
+    printf("Hello from C!\n");
+}
+
+// Esta definição tem o id de tipo "_ZTSFvPFvlElE", mas será codificado como
+// "_ZTSFvPFvu3i32ES_E" (comprimido) ou "_ZTSFvPFvu3i64ES_E" (comprimido),
+// dependendo do modelo de dados, se a opção de normalização de inteiros está
+// habilitada--isso pode ser ignorado para os propósitos deste exemplo.
+void
+indirect_call_from_c(void (*fn)(long), long arg)
+{
+    // Este local de chamada testa se o ponteiro de destino é um membro do grupo
+    // derivado do mesmo id de tipo da declaração de fn, que tem o id de tipo
+    // "_ZTSFvlE", mas será codificado como "_ZTSFvu3i32E" ou "_ZTSFvu3i64E",
+    // dependendo do modelo de dados, se a opção de normalização de inteiros
+    // está habilitada.
+    fn(arg);
+}
+\end{lstlisting}
+
+Especificamente, os tipos inteiros são codificados como suas representações definidas (e.g., inteiro com sinal de 8 bits, inteiro com sinal de 16 bits, inteiro com sinal de 32 bits, …) para compatibilidade com linguagens que definem tipos inteiros de tamanho explícito (e.g., \texttt{i8}, \texttt{i16}, \texttt{i32}, …, em Rust) (veja Fig. 5).
+
+Isso faz com que LLVM CFI (e LLVM KCFI) entre linguagens funcione sem alterações, com perda mínima de granularidade.\footnotemark[4]
+
+\footnotetext[4]{E.g., \href{https://github.com/rust-lang/rfcs/pull/3296#issuecomment-1432190581}{~1\% no kernel do Linux}.}
+
+
+\subsection{O atributo cfi\_encoding}
+
+Para fornecer flexibilidade ao usuário, também fornecemos o atributo \texttt{\href{https://doc.rust-lang.org/nightly/unstable-book/language-features/cfi-encoding.html#cfi_encoding}{cfi\_encoding}}. O atributo \texttt{cfi\_encoding} permite ao usuário definir a codificação CFI para tipos definidos pelo usuário.
+
+\begin{lstlisting}[language=Rust, caption={Exemplo de tipos definidos pelo usuário usando o atributo cfi\_encoding.}]
+#![feature(cfi_encoding, extern_types)]
+#[cfi_encoding = "3Foo"]
+pub struct Type1(i32);
+extern {
+    #[cfi_encoding = "3Bar"]
+    type Type2;
+}
+\end{lstlisting}
+
+Ele permite ao usuário usar nomes diferentes para tipos que de outra forma seriam obrigados a ter o mesmo nome usado em funções C definidas externamente (veja Fig. 6).
+
+
+\subsection{A crate cfi\_types}
+
+Alternativamente, para resolver também o problema de codificação de tipos inteiros C, fornecemos a \href{https://github.com/rcvalle/rust-cfi-types}{\textit{crate} \texttt{cfi\_types}}. Esta \textit{crate} fornece um novo conjunto de tipos C como tipos definidos pelo usuário usando o atributo \texttt{cfi\_encoding} e \texttt{repr(transparent)} para serem usados para suporte a LLVM CFI entre linguagens.
+
+\begin{lstlisting}[language=Rust, caption={Exemplo de programa Rust usando tipos inteiros Rust e a codificação do compilador Rust com os tipos da crate cfi\_types.}]
+use cfi_types::c_long;
+
+#[link(name = "foo")]
+extern "C" {
+    // Esta declaração tem o id de tipo "_ZTSFvlE" porque usa os tipos CFI para
+    // suporte a LLVM CFI entre linguagens. A cfi_types crate fornece um novo
+    // conjunto de tipos C como tipos definidos pelo usuário usando o atributo
+    // cfi_encoding e repr(transparent) para serem usados para suporte a LLVM
+    // CFI entre linguagens. Este novo conjunto de tipos C permite que o
+    // compilador Rust identifique e codifique corretamente os tipos C em tipos
+    // de função extern "C" chamados indiretamente através da borda FFI quando
+    // CFI está habilitado.
+    fn hello_from_c(_: c_long);
+
+    // Esta declaração tem o id de tipo "_ZTSFvPFvlElE" porque usa os tipos CFI
+    // para suporte a LLVM CFI entre linguagens--isso pode ser ignorado para os
+    // propósitos deste exemplo.
+    fn indirect_call_from_c(f: unsafe extern "C" fn(c_long), arg: c_long);
+}
+
+// Esta definição tem o id de tipo "_ZTSFvlE" porque usa os tipos CFI para
+// suporte a LLVM CFI entre linguagens, da mesma forma que a declaração
+// hello_from_c acima.
+unsafe extern "C" fn hello_from_rust(_: c_long) {
+    println!("Hello, world!");
+}
+
+// Esta definição tem o id de tipo "_ZTSFvlE" porque usa os tipos CFI para
+// suporte a LLVM CFI entre linguagens, da mesma forma que a declaração
+// hello_from_c acima.
+unsafe extern "C" fn hello_from_rust_again(_: c_long) {
+    println!("Hello from Rust again!");
+}
+
+// Esta definição também tem o id de tipo "_ZTSFvPFvlElE" porque usa os tipos
+// CFI para suporte a LLVM CFI entre linguagens, da mesma forma que a declaração
+// hello_from_c acima--isso pode ser ignorado para os propósitos deste exemplo.
+fn indirect_call(f: unsafe extern "C" fn(c_long), arg: c_long) {
+    // Este local de chamada indireta testa se o ponteiro de destino é um membro
+    // do grupo derivado do mesmo id de tipo da declaração de f, que tem o id de
+    // tipo "_ZTSFvlE" porque usa os tipos CFI para suporte a LLVM CFI entre
+    // linguagens, da mesma forma que a declaração hello_from_c acima.
+    unsafe { f(arg) }
+}
+
+// Esta definição tem o id de tipo "_ZTSFvvE"--isso pode ser ignorado para os
+// propósitos deste exemplo.
+fn main() {
+    // Isto demonstra uma chamada indireta dentro do código somente em Rust
+    // usando a mesma codificação para hello_from_rust e o teste no local de
+    // chamada indireta em indirect_call (i.e., "_ZTSFvlE").
+    indirect_call(hello_from_rust, c_long(5));
+
+    // Isto demonstra uma chamada indireta através da borda FFI com o compilador
+    // Rust e Clang usando a mesma codificação para hello_from_c e o teste no
+    // local de chamada indireta em indirect_call (i.e., "_ZTSFvlE").
+    indirect_call(hello_from_c, c_long(5));
+
+    // Isto demonstra uma chamada indireta para uma função passada como uma
+    // callback através da borda FFI com o compilador Rust e Clang usando a
+    // mesma codificação para hello_from_rust_again e o teste no local de
+    // chamada indireta em indirect_call_from_c (i.e., "_ZTSFvlE").
+    unsafe {
+        indirect_call_from_c(hello_from_rust_again, c_long(5));
+    }
+}
+\end{lstlisting}
+
+Este novo conjunto de tipos C permite que o compilador Rust identifique e codifique corretamente tipos C em tipos de função \texttt{extern "C"} chamadas indiretamente através da borda FFI quando CFI está habilitado (veja Fig 7).
+
+
+\section{Resultados}
+
+O suporte LLVM CFI no compilador Rust fornece \textit{forward-edge control flow protection} para código compilado somente em Rust e para binários de linguagem mista de código compilado em C ou C++ e Rust, também conhecidos como “binários mistos” (i.e., para quando código compilado em C ou C++ e Rust compartilham o mesmo espaço de endereço virtual), agregando ponteiros de função em grupos identificados por seus tipos de retorno e parâmetro.
+
+LLVM CFI pode ser habilitado com \texttt{-Zsanitizer=cfi} e requer LTO (i.e., \texttt{-Clinker-plugin-lto} ou \texttt{-Clto}). LLVM CFI entre linguagens pode ser habilitado com \texttt{-Zsanitizer=cfi}, requer que a opção \texttt{-Zsanitizer-cfi-normalize-integers} seja usada com a opção do Clang \texttt{-fsanitize-cfi-icall-experimental-normalize-integers} para suporte LLVM CFI entre linguagens, e LTO adequado (i.e., não-rustc) (i.e., \texttt{-Clinker-plugin-lto}).
+
+É recomendado recompilar a biblioteca padrão com CFI habilitado usando o recurso Cargo build-std (i.e., \texttt{-Zbuild-std}) ao habilitar o CFI.
+
+
+\subsection{Exemplo 1: Redirecionando o fluxo de controle usando uma chamada indireta para um destino inválido}
+
+\begin{lstlisting}[language=Rust, caption={Redirecionando o fluxo de controle usando uma chamada indireta para um destino inválido (i.e., dentro do corpo da função).}]
+#![feature(naked_functions)]
+
+use std::arch::asm;
+use std::mem;
+
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+#[naked]
+pub extern "C" fn add_two(x: i32) {
+    // x + 2 preceded by a landing pad/nop block
+    unsafe {
+        asm!(
+            "
+             nop
+             nop
+             nop
+             nop
+             nop
+             nop
+             nop
+             nop
+             nop
+             lea eax, [rdi+2]
+             ret
+        ",
+            options(noreturn)
+        );
+    }
+}
+
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+
+fn main() {
+    let answer = do_twice(add_one, 5);
+
+    println!("The answer is: {}", answer);
+
+    println!("With CFI enabled, you should not see the next answer");
+    let f: fn(i32) -> i32 = unsafe {
+        // O Offset 0 é um destino de chamada válido (i.e., o ponto de entrada
+        // da função), mas os offsets 1-8 dentro do bloco de NOPs são destinos
+        // de chamada inválidos (i.e., dentro do corpo da função).
+        mem::transmute::<*const u8, fn(i32) -> i32>((add_two as *const u8).offset(5))
+    };
+    let next_answer = do_twice(f, 5);
+
+    println!("The next answer is: {}", next_answer);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 8 com LLVM CFI desabilitado.}]
+$ cargo run --release
+   Compiling rust-cfi-1 v0.1.0 (/home/rcvalle/rust-cfi-1)
+    Finished release [optimized] target(s) in 0.43s
+     Running `target/release/rust-cfi-1`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+The next answer is: 14
+$
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 8 com LLVM CFI habilitado.}]
+$ RUSTFLAGS="-Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld -Zsanitizer=cfi" cargo run -Zbuild-std -Zbuild-std-features --release --target x86_64-unknown-linux-gnu
+   ...
+   Compiling rust-cfi-1 v0.1.0 (/home/rcvalle/rust-cfi-1)
+    Finished release [optimized] target(s) in 1m 08s
+     Running `target/x86_64-unknown-linux-gnu/release/rust-cfi-1`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+Illegal instruction
+$
+\end{lstlisting}
+
+Quando o LLVM CFI está habilitado, se houver alguma tentativa de redirecionar o fluxo de controle usando uma chamada indireta para um destino inválido, a execução é terminada (veja Fig. 10).
+
+
+\subsection{Exemplo 2: Redirecionando o fluxo de controle usando uma chamada indireta para uma função com um número diferente de parâmetros}
+
+\begin{lstlisting}[language=Rust, caption={Redirecionando o fluxo de controle usando uma chamada indireta para uma função com um número de parâmetros diferente dos argumentos passados no local de chamada.}]
+use std::mem;
+
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+fn add_two(x: i32, _y: i32) -> i32 {
+    x + 2
+}
+
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+
+fn main() {
+    let answer = do_twice(add_one, 5);
+
+    println!("The answer is: {}", answer);
+
+    println!("With CFI enabled, you should not see the next answer");
+    let f: fn(i32) -> i32 =
+        unsafe { mem::transmute::<*const u8, fn(i32) -> i32>(add_two as *const u8) };
+    let next_answer = do_twice(f, 5);
+
+    println!("The next answer is: {}", next_answer);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 11 com LLVM CFI desabilitado.}]
+$ cargo run --release
+   Compiling rust-cfi-2 v0.1.0 (/home/rcvalle/rust-cfi-2)
+    Finished release [optimized] target(s) in 0.43s
+     Running `target/release/rust-cfi-2`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+The next answer is: 14
+$
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 11 com LLVM CFI habilitado.}]
+$ RUSTFLAGS="-Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld -Zsanitizer=cfi" cargo run -Zbuild-std -Zbuild-std-features --release --target x86_64-unknown-linux-gnu
+   ...
+   Compiling rust-cfi-2 v0.1.0 (/home/rcvalle/rust-cfi-2)
+    Finished release [optimized] target(s) in 1m 08s
+     Running `target/x86_64-unknown-linux-gnu/release/rust-cfi-2`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+Illegal instruction
+$
+\end{lstlisting}
+
+Quando o LLVM CFI está habilitado, se houver alguma tentativa de redirecionar o fluxo de controle usando uma chamada indireta para uma função com um número de parâmetros diferente dos argumentos passados no local de chamada, a execução também é terminada (veja Fig. 13).
+
+
+\subsection{Exemplo 3: Redirecionando o fluxo de controle usando uma chamada indireta para uma função com diferentes tipos de retorno e parâmetro}
+
+\begin{lstlisting}[language=Rust, caption={Redirecionando o fluxo de controle usando uma chamada indireta para uma função com tipos de retorno e parâmetro diferentes do tipo de retorno esperado e argumentos passados no local de chamada.}]
+use std::mem;
+
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+fn add_two(x: i64) -> i64 {
+    x + 2
+}
+
+fn do_twice(f: fn(i32) -> i32, arg: i32) -> i32 {
+    f(arg) + f(arg)
+}
+
+fn main() {
+    let answer = do_twice(add_one, 5);
+
+    println!("The answer is: {}", answer);
+
+    println!("With CFI enabled, you should not see the next answer");
+    let f: fn(i32) -> i32 =
+        unsafe { mem::transmute::<*const u8, fn(i32) -> i32>(add_two as *const u8) };
+    let next_answer = do_twice(f, 5);
+
+    println!("The next answer is: {}", next_answer);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 14 com LLVM CFI desabilitado.}]
+$ cargo run --release
+   Compiling rust-cfi-3 v0.1.0 (/home/rcvalle/rust-cfi-3)
+    Finished release [optimized] target(s) in 0.44s
+     Running `target/release/rust-cfi-3`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+The next answer is: 14
+$
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução da Fig. 14 com LLVM CFI habilitado.}]
+$ RUSTFLAGS="-Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld -Zsanitizer=cfi" cargo run -Zbuild-std -Zbuild-std-features --release --target x86_64-unknown-linux-gnu
+   ...
+   Compiling rust-cfi-3 v0.1.0 (/home/rcvalle/rust-cfi-3)
+    Finished release [optimized] target(s) in 1m 07s
+     Running `target/x86_64-unknown-linux-gnu/release/rust-cfi-3`
+The answer is: 12
+With CFI enabled, you should not see the next answer
+Illegal instruction
+$
+\end{lstlisting}
+
+Quando o LLVM CFI está habilitado, se houver alguma tentativa de redirecionar o fluxo de controle usando uma chamada indireta para uma função com tipos de retorno e parâmetro diferentes do tipo de retorno esperado e argumentos passados no local de chamada, a execução também é terminada (veja Fig. 16).
+
+
+\subsection{Exemplo 4: Redirecionando o fluxo de controle usando uma chamada indireta para uma função com diferentes tipos de retorno e parâmetro através da borda FFI}
+
+\begin{lstlisting}[language=C, caption={Exemplo de biblioteca C.}]
+int
+do_twice(int (*fn)(int), int arg)
+{
+    return fn(arg) + fn(arg);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Redirecionando o fluxo de controle usando uma chamada indireta para uma função com tipos de retorno e de parâmetro diferentes do tipo de retorno esperado e argumentos passados no local de chamada, através da borda FFI}]
+use std::mem;
+
+#[link(name = "foo")]
+extern "C" {
+    fn do_twice(f: unsafe extern "C" fn(i32) -> i32, arg: i32) -> i32;
+}
+
+unsafe extern "C" fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+unsafe extern "C" fn add_two(x: i64) -> i64 {
+    x + 2
+}
+
+fn main() {
+    let answer = unsafe { do_twice(add_one, 5) };
+
+    println!("The answer is: {}", answer);
+
+    println!("With CFI enabled, you should not see the next answer");
+    let f: unsafe extern "C" fn(i32) -> i32 = unsafe {
+        mem::transmute::<*const u8, unsafe extern "C" fn(i32) -> i32>(add_two as *const u8)
+    };
+    let next_answer = unsafe { do_twice(f, 5) };
+
+    println!("The next answer is: {}", next_answer);
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução das Figs. 17–18 com LLVM CFI desabilitado.}]
+$ make
+mkdir -p target/release
+clang -I. -Isrc -Wall -c src/foo.c -o target/release/libfoo.o
+llvm-ar rcs target/release/libfoo.a target/release/libfoo.o
+RUSTFLAGS="-L./target/release -Clinker=clang -Clink-arg=-fuse-ld=lld" cargo build --release
+   Compiling rust-cfi-4 v0.1.0 (/home/rcvalle/rust-cfi-4)
+    Finished release [optimized] target(s) in 0.49s
+$ ./target/release/rust-cfi-4
+The answer is: 12
+With CFI enabled, you should not see the next answer
+The next answer is: 14
+$
+\end{lstlisting}
+
+\begin{lstlisting}[language=Rust, caption={Compilação e execução das Figs. 17–18 com LLVM CFI habilitado.}]
+$ make
+mkdir -p target/release
+clang -I. -Isrc -Wall -flto -fsanitize=cfi -fsanitize-cfi-icall-experimental-normalize-integers -fvisibility=hidden -c -emit-llvm src/foo.c -o target/release/libfoo.bc
+llvm-ar rcs target/release/libfoo.a target/release/libfoo.bc
+RUSTFLAGS="-L./target/release -Clinker-plugin-lto -Clinker=clang -Clink-arg=-fuse-ld=lld -Zsanitizer=cfi -Zsanitizer-cfi-normalize-integers" cargo build -Zbuild-std -Zbuild-std-features --release --target x86_64-unknown-linux-gnu
+   ...
+   Compiling rust-cfi-4 v0.1.0 (/home/rcvalle/rust-cfi-4)
+    Finished release [optimized] target(s) in 1m 06s
+$ ./target/x86_64-unknown-linux-gnu/release/rust-cfi-4
+The answer is: 12
+With CFI enabled, you should not see the next answer
+Illegal instruction
+$
+\end{lstlisting}
+
+Quando o LLVM CFI está habilitado, se houver alguma tentativa de redirecionar o fluxo de controle usando uma chamada indireta para uma função com tipos de retorno e de parâmetro diferentes do tipo de retorno esperado e argumentos passados no local de chamada, mesmo através da borda FFI e para funções passada como uma \textit{callback} através da borda FFI através da borda FFI, a execução também é terminada (veja Fig. 20).
+
+\subsection{Desempenho}
+
+Testes preliminares de desempenho (i.e., um bilhão de chamadas para uma função contendo uma chamada indireta sem e com LLVM CFI habilitado comparados) usando cargo bench indicam impacto insignificante no desempenho (i.e., ~0,01\%).
+
+
+\section{Conclusão}
+
+LLVM CFI e LLVM CFI entre linguagens (e LLVM KCFI e LLVM KCFI entre linguagens) estão disponíveis em \textit{nightly builds} do compilador Rust. À medida que trabalhamos para estabilizar esses recursos (veja \href{https://hackmd.io/@rcvalle/S1Ou9K6H6}{nosso \textit{roadmap}}), estamos começando a experimentá-los em nossos produtos e serviços, e incentivamos você a experimentar também e nos informar se tiver algum problema (veja os \href{https://github.com/rust-lang/rust/issues?q=is:open+label:PG-exploit-mitigations+CFI} {problemas conhecidos}).
+
+Esperamos que este trabalho também forneça a base para futuras implementações de \textit{forward-edge control flow protection}, de fina granularidade, entre linguagens, combinada com suporte de hardware e baseada em software, como Microsoft Windows XFG, ARM Pointer Authentication-based forward-edge control flow protection, e Intel FineIBT.
+
+
+\section{Agradecimentos}
+
+Agradecimentos a bjorn3 (Björn Roy Baron), compiler-errors (Michael Goulet), eddyb (Eduard-Mihai Burtescu), matthiaskrgr (Matthias Krüger), mmaurer (Matthew Maurer), nagisa (Simonas Kazlauskas), pcc (Peter Collingbourne), pnkfelix (Felix Klock), samitolvanen (Sami Tolvanen), tmiasko (Tomasz Miąsko), e a comunidade Rust por toda a ajuda neste projeto.
+
+
+\end{document}

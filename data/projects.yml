@@ -1,0 +1,57 @@
+---
+- description: |-
+    The Rust Exploit Mitigations Project Group investigates past, present, and
+    future exploit mitigations, including hardware -assisted or -provided
+    exploit mitigations, and how they apply to Rust and the Rust compiler.
+
+    This Project Group aims to maintain and improve the existing, implement,
+    and research new exploit mitigations for the Rust compiler, and allow the
+    Rust community to better understand those exploit mitigations and how they
+    apply to Rust and the Rust compiler.
+  filename: rust-exploit-mitigations.md
+  name: Rust Exploit Mitigations Project Group
+  published: 2022-09-12 00:00:00.000000000 Z
+  resources:
+  - name: View on GitHub
+    url: https://github.com/rust-lang/project-exploit-mitigations
+  - name: View on Rust Programming Language
+    url: https://www.rust-lang.org/governance/teams/compiler#Exploit%20Mitigations%20Project%20Group
+  updated:
+  url: docs/rust-exploit-mitigations.md
+- description: |-
+    As the industry continues to explore Rust adoption, [cross-language
+    attacks](https://www.ndss-symposium.org/wp-content/uploads/2022-78-paper.pdf)
+    in [mixed-language binaries](https://dl.acm.org/doi/pdf/10.1145/3418898)
+    (also known as “mixed binaries”), and critically [the absence of support
+    for forward-edge control flow protection in the Rust
+    compiler](docs/rust-cfi-design-doc.md), are a major security concern when
+    gradually migrating from C and C++ to Rust, and when C or C++ and
+    Rust-compiled code share the same virtual address space.
+
+    This project aims to add LLVM CFI and cross-language LLVM CFI (and LLVM
+    KCFI and cross-language LLVM KCFI) to the Rust compiler as part of our work
+    in the [Rust Exploit Mitigations Project
+    Group](https://www.rust-lang.org/governance/teams/compiler#Exploit%20Mitigations%20Project%20Group).
+  filename: rust-cfi-design-doc.md
+  name: LLVM CFI and cross-language LLVM CFI support for the Rust compiler
+  published: 2021-10-07 00:00:00.000000000 Z
+  resources:
+  - name: View on GitHub
+    url: https://github.com/rust-lang/rust/issues/89653
+  updated:
+  url: docs/rust-cfi-design-doc.md
+- description: This project contains a set of assembly components for proof of concept
+    codes (i.e., "shellcodes") for different operating systems and architectures.
+    These components were carefully designed and implemented for maximum reliability,
+    following strict coding standards and requirements, such as system call invocation
+    standards, position-independent, register-independent and zero-free code. A special
+    attention was put on code length when designing and implementing them, resulting
+    in the most reliable and shortest codes for such purpose available today.
+  filename: unixasm-1.4.0.tar.gz
+  name: UNIX Assembly Components for Proof of Concept Codes
+  published: 2004-10-24 00:00:00.000000000 Z
+  resources:
+  - name: View on GitHub
+    url: https://github.com/risesecurity/unixasm
+  updated: 2010-05-23 00:00:00.000000000 Z
+  url: https://github.com/risesecurity/archive/raw/HEAD/unixasm-1.4.0.tar.gz
