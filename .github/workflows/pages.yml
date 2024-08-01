@@ -27,6 +27,7 @@ jobs:
 
       - name: Build
         run: |
+          pip install mkdocs
           pip install mkdocs-callouts
           pip install mkdocs-ezlinks-plugin
           pip install mkdocs-glightbox
