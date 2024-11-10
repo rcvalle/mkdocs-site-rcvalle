@@ -42,7 +42,7 @@ jobs:
           sudo apt install -qq tidy
 
       - name: Run Tidy
-        run: find site/ -name "*.html" -type f -exec tidy -config config.txt -m '{}' \;
+        run: find site/ -name "*.html" -not -path site/assets/ -type f -exec tidy -config config.txt -m '{}' \;
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v1

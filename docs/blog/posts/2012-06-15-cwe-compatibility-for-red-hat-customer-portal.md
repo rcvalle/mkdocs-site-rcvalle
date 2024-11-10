@@ -17,7 +17,15 @@ updated: 2012-06-15
 > The contents of this post are now part of the Red Hat Customer Portal as [a
 > Knowledgebase article](https://access.redhat.com/articles/cwe_compatibility).
 
-We are currently engaged in the CWE Compatibility and Effectiveness Program and working towards fulfilling its requirements for using CWE in our own outside-in methodology for identifying and eliminating the most dangerous software errors and weaknesses in our products. The CWE Compatibility and Effectiveness Program is a formal review and evaluation process for declaring products and services as “CWE-Compatible” and “CWE-Effective.”
+> [!info]
+> This post was also published at
+> <https://access.redhat.com/blogs/766093/posts/1975953>.
+
+> [!info]
+> This post was also published at
+> [https://securityblog.redhat.com/2013/06/05/cwe-compatibility-for-red-hat-customer-portal/](https://web.archive.org/web/20150906121505/https://securityblog.redhat.com/2013/06/05/cwe-compatibility-for-red-hat-customer-portal/).
+
+We are currently engaged in the CWE Compatibility and Effectiveness Program, and working towards fulfilling its requirements for using CWE in our CWE risk assessment process for working towards identifying and eliminating the most dangerous software errors and weaknesses in our products. The CWE Compatibility and Effectiveness Program is a formal review and evaluation process for declaring products and services as “CWE-Compatible” and “CWE-Effective”.
 
 <!-- more -->
 
