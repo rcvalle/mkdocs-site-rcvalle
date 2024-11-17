@@ -63,10 +63,10 @@ plugins:
   - redirects:
       redirect_maps:
         'index.md': 'blog/index.md'
-        '2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
-        '2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
-        # 'blog/2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
-        'blog/2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-rust-exploit-mitigations.md'
+        '2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-exploit-mitigations-for-rust.md'
+        '2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-exploit-mitigations-for-rust.md'
+        'blog/2020-09-16-rust-exploit-mitigations.md': 'blog/posts/2020-09-16-exploit-mitigations-for-rust.md'
+        'blog/2020-09-16-rust-lang-exploit-mitigations.md': 'blog/posts/2020-09-16-exploit-mitigations-for-rust.md'
   # - search
 site_name: rcvalle
 site_url: https://rcvalle.com
